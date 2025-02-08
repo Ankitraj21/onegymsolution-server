@@ -1,0 +1,40 @@
+# Ignore build outputs
+bin/
+obj/
+
+# Ignore user-specific files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Ignore Rider project files
+.idea/
+
+# Ignore Visual Studio Code settings
+.vscode/
+
+# Ignore NuGet packages
+*.nupkg
+*.snupkg
+
+# Ignore logs
+*.log
+
+# Ignore publish outputs
+publish/
+
+# Ignore temporary files
+*.tmp
+*.temp
+
+# Ignore coverage reports
+coverage/
+
+# Ignore environment-specific Docker files
+docker-compose.override.yml
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db

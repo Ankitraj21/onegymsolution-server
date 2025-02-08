@@ -1,0 +1,23 @@
+name: PR_Request
+on:
+  pull_request:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v2
+      with:
+        dotnet-version: '8.0.x'
+    - name: Install dependencies
+      run: |
+        echo "Installing dependencies..."
+        dotnet restore
+
+    - name: Test  
+      run: |
+        echo "Run Test Cases..."
+        dotnet test
