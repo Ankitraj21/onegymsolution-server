@@ -5,7 +5,7 @@ const scryptAsync = promisify(scrypt);
 const ACCESS_TOKEN_TTL_SECONDS = Number(process.env.JWT_ACCESS_TOKEN_TTL_SECONDS ?? 15 * 60);
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type UserRole = "CUSTOMER" | "GYM_OWNER" | "ADMIN";
+export type UserRole = "CUSTOMER" | "GYM_OWNER" | "TRAINER" | "ADMIN";
 
 export type AuthClaims = {
   sub: number;
