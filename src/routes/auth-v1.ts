@@ -1,6 +1,16 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
-import { db, gymsTable, passwordResetTokensTable, refreshTokensTable, usersTable } from "@workspace/db";
+import {
+  db,
+  gymsTable,
+  passwordResetTokensTable,
+  refreshTokensTable,
+  trainerCertificationsTable,
+  trainerProfilesTable,
+  trainerGymsTable,
+  trainerVisibilitySettingsTable,
+  usersTable,
+} from "@workspace/db";
 import {
   createAccessToken,
   createPasswordResetToken,
@@ -36,6 +46,29 @@ function validPassword(value: unknown): value is string {
 
 type AccountInput = { name: string; email: string; phone: string; password: string };
 type OwnerInput = AccountInput & { registrationCode: string; gymName: string; gymAddress: string; gymCity: string; gymNeighborhood?: string };
+type TrainerInput = AccountInput & {
+  city: string;
+  address?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  specializations: string[];
+  expertise?: string;
+  trainingStyle?: string;
+  languages: string[];
+  qualification?: string;
+  bio: string;
+  trainingLocation?: string;
+  yearsExperience: number;
+  pricePerSessionMinor?: number;
+  gymId: number;
+  certifications?: Array<{
+    name: string;
+    issuingOrganization: string;
+    certificationId?: string;
+    issueDate?: string;
+    expiryDate?: string;
+  }>;
+};
 
 function accountInput(body: unknown): body is AccountInput {
   if (!body || typeof body !== "object") return false;
@@ -51,6 +84,27 @@ function ownerInput(body: unknown): body is OwnerInput {
     typeof (body as Record<string, unknown>).gymName === "string" && (body as Record<string, string>).gymName.trim().length >= 2 &&
     typeof (body as Record<string, unknown>).gymAddress === "string" && (body as Record<string, string>).gymAddress.trim().length >= 4 &&
     typeof (body as Record<string, unknown>).gymCity === "string" && (body as Record<string, string>).gymCity.trim().length >= 2;
+}
+
+function stringArray(value: unknown, max = 20): value is string[] {
+  return Array.isArray(value) && value.length <= max && value.every((item) => typeof item === "string" && item.trim().length > 0);
+}
+
+function trainerInput(body: unknown): body is TrainerInput {
+  if (!accountInput(body) || !body || typeof body !== "object") return false;
+  const value = body as Record<string, unknown>;
+  return typeof value.city === "string" && value.city.trim().length >= 2 &&
+    typeof value.bio === "string" && value.bio.trim().length >= 20 &&
+    stringArray(value.specializations) && value.specializations.length > 0 &&
+    stringArray(value.languages) && value.languages.length > 0 &&
+    typeof value.yearsExperience === "number" && Number.isInteger(value.yearsExperience) && value.yearsExperience >= 0 && value.yearsExperience <= 60 &&
+    (value.certifications === undefined || (Array.isArray(value.certifications) && value.certifications.every((item) => {
+      if (!item || typeof item !== "object") return false;
+      const certification = item as Record<string, unknown>;
+      return typeof certification.name === "string" && certification.name.trim().length >= 2 &&
+        typeof certification.issuingOrganization === "string" && certification.issuingOrganization.trim().length >= 2;
+    }))) &&
+    typeof value.gymId === "number" && Number.isInteger(value.gymId) && value.gymId > 0;
 }
 
 function duplicateError(error: unknown, depth = 0): boolean {
@@ -129,6 +183,76 @@ router.post("/auth/register-owner", authRateLimit, async (req, res): Promise<voi
   }
 });
 
+router.post("/auth/register-trainer", authRateLimit, async (req, res): Promise<void> => {
+  if (!trainerInput(req.body)) {
+    failure(res, 422, "Name, valid contact details, city, bio, specialization, language, and experience are required", "VALIDATION_ERROR");
+    return;
+  }
+  try {
+    const trainerData = req.body as TrainerInput;
+    const result = await db.transaction(async (tx) => {
+        const [gym] = await tx.select({ id: gymsTable.id }).from(gymsTable).where(and(eq(gymsTable.id, trainerData.gymId), eq(gymsTable.status, "APPROVED")));
+        if (!gym) throw new Error("TRAINER_GYM_NOT_FOUND");
+      const [user] = await tx.insert(usersTable).values({
+        name: trainerData.name.trim(),
+        email: normalizeEmail(trainerData.email),
+        phone: normalizePhone(trainerData.phone),
+        passwordHash: await hashPassword(req.body.password),
+        role: "TRAINER",
+        status: "ACTIVE",
+      }).returning();
+      const [profile] = await tx.insert(trainerProfilesTable).values({
+        userId: user.id,
+        city: trainerData.city.trim(),
+        address: trainerData.address?.trim() || null,
+        dateOfBirth: trainerData.dateOfBirth || null,
+        gender: trainerData.gender?.trim() || null,
+        specializations: trainerData.specializations.map((item: string) => item.trim()),
+        specialization: trainerData.specializations[0]?.trim() ?? null,
+        expertise: trainerData.expertise?.trim() || null,
+        trainingStyle: trainerData.trainingStyle?.trim() || null,
+        languages: trainerData.languages.map((item: string) => item.trim()),
+        qualification: trainerData.qualification?.trim() || null,
+        bio: trainerData.bio.trim(),
+        trainingLocation: trainerData.trainingLocation?.trim() || null,
+        yearsExperience: trainerData.yearsExperience,
+        pricePerSessionMinor: typeof trainerData.pricePerSessionMinor === "number" && Number.isInteger(trainerData.pricePerSessionMinor) ? trainerData.pricePerSessionMinor : null,
+        status: "PENDING_APPROVAL",
+         adminVerificationStatus: "PENDING",
+      }).returning();
+       await tx.insert(trainerGymsTable).values({
+         trainerId: profile.id,
+         gymId: gym.id,
+         isPrimaryGym: true,
+         sessionPriceMinor: typeof trainerData.pricePerSessionMinor === "number" && Number.isInteger(trainerData.pricePerSessionMinor) ? trainerData.pricePerSessionMinor : null,
+         currency: "INR",
+         status: "ACTIVE",
+       });
+      await tx.insert(trainerVisibilitySettingsTable).values({ trainerId: profile.id });
+      if (trainerData.certifications?.length) {
+        await tx.insert(trainerCertificationsTable).values(trainerData.certifications.map((certification: NonNullable<TrainerInput["certifications"]>[number]) => ({
+          trainerId: profile.id,
+          name: certification.name.trim(),
+          issuingOrganization: certification.issuingOrganization.trim(),
+          certificationId: certification.certificationId?.trim() || null,
+          issueDate: certification.issueDate || null,
+          expiryDate: certification.expiryDate || null,
+          verificationStatus: "PENDING",
+        })));
+      }
+      return user;
+    });
+    success(res, { user: publicUser(result), ...(await issueTokens(result)) }, "Trainer application submitted for review", 201);
+   } catch (error) {
+     if (error instanceof Error && error.message === "TRAINER_GYM_NOT_FOUND") {
+       failure(res, 422, "Choose an approved gym where you will train", "TRAINER_GYM_REQUIRED");
+       return;
+     }
+    if (duplicateError(error)) failure(res, 409, "An account with this email or phone already exists", "DUPLICATE_ACCOUNT");
+    else throw error;
+  }
+});
+
 router.post("/auth/login", authRateLimit, async (req, res): Promise<void> => {
   if (typeof req.body?.identifier !== "string" && typeof req.body?.email !== "string" || typeof req.body?.password !== "string") {
     failure(res, 422, "Email or mobile number and password are required", "VALIDATION_ERROR");
@@ -143,6 +267,22 @@ router.post("/auth/login", authRateLimit, async (req, res): Promise<void> => {
   }
   const [updated] = await db.update(usersTable).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(usersTable.id, user.id)).returning();
   success(res, { user: publicUser(updated), ...(await issueTokens(updated)) }, "Login successful");
+});
+
+router.post("/auth/login-trainer", authRateLimit, async (req, res): Promise<void> => {
+  if ((typeof req.body?.identifier !== "string" && typeof req.body?.email !== "string") || typeof req.body?.password !== "string") {
+    failure(res, 422, "Email or mobile number and password are required", "VALIDATION_ERROR");
+    return;
+  }
+  const identifier = typeof req.body.identifier === "string" ? req.body.identifier : req.body.email;
+  const normalized = identifier.includes("@") ? normalizeEmail(identifier) : normalizePhone(identifier);
+  const [user] = await db.select().from(usersTable).where(or(eq(usersTable.email, normalized), eq(usersTable.phone, normalized)));
+  if (!user || user.role !== "TRAINER" || user.status !== "ACTIVE" || !(await verifyPassword(req.body.password, user.passwordHash))) {
+    failure(res, 401, "Invalid trainer credentials", "INVALID_CREDENTIALS");
+    return;
+  }
+  const [updated] = await db.update(usersTable).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(usersTable.id, user.id)).returning();
+  success(res, { user: publicUser(updated), ...(await issueTokens(updated)) }, "Trainer login successful");
 });
 
 router.post("/auth/forgot-password", authRateLimit, async (req, res): Promise<void> => {

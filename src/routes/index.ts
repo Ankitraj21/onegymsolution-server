@@ -11,6 +11,7 @@ import adminV1Router from "./admin-v1";
 import docsV1Router from "./docs-v1";
 import fitnessAiV1Router from "./fitness-ai-v1";
 import fitnessTrackingV1Router from "./fitness-tracking-v1";
+import trainerV1Router from "./trainer-v1";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,7 @@ router.use("/v1", socialV1Router);
 router.use("/v1", docsV1Router);
 router.use("/v1", fitnessAiV1Router);
 router.use("/v1", fitnessTrackingV1Router);
+router.use("/v1", trainerV1Router);
 router.use("/v1", adminV1Router);
 
 export default router;
